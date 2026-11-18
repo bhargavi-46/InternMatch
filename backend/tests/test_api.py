@@ -71,6 +71,7 @@ def test_rate_limiter_blocks_after_limit():
             503,
             "rejected the API key",
         ),
+        (groq.APIConnectionError(request=httpx.Request("POST", "https://api.groq.com")), 503, "internet connection"),
     ],
 )
 def test_llm_failures_return_clear_messages(monkeypatch, error, status, phrase):

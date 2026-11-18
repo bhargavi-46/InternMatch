@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Literal
@@ -25,6 +26,8 @@ from app.ratelimit import llm_rate_limit
 from app.resume import parse_resume, pdf_to_text
 
 MAX_RESUME_BYTES = 5 * 1024 * 1024
+
+log = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
@@ -60,9 +63,18 @@ def llm_quota(_: Request, exc: groq.RateLimitError) -> JSONResponse:
     return JSONResponse(status_code=429, content={"detail": detail})
 
 
+@app.exception_handler(groq.APIConnectionError)
+def llm_unreachable(_: Request, exc: groq.APIConnectionError) -> JSONResponse:
+    log.error("LLM call failed: %s", type(exc).__name__)
+    detail = "Could not reach the AI service (Groq). Check your internet connection and try again."
+    return JSONResponse(status_code=503, content={"detail": detail})
+
+
 @app.exception_handler(groq.APIError)
 @app.exception_handler(OutputParserException)
 def llm_failed(_: Request, exc: Exception) -> JSONResponse:
+    # Log the real cause (never the request body, which holds resume text) so it can be fixed.
+    log.error("LLM call failed: %s: %s", type(exc).__name__, str(exc)[:1000])
     detail = "The AI service gave an unexpected answer. Please try again."
     return JSONResponse(status_code=502, content={"detail": detail})
 

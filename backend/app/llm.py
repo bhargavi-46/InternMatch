@@ -1,3 +1,5 @@
+import groq
+from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
 from langchain_groq import ChatGroq
 from pydantic import BaseModel
@@ -22,9 +24,14 @@ def get_llm() -> ChatGroq:
 
 
 def structured_llm(schema: type[BaseModel]) -> Runnable:
-    """An LLM whose reply is guaranteed to match `schema`.
+    """An LLM whose reply matches `schema`.
 
     strict=True turns on Groq's constrained decoding for gpt-oss models. Without it the model sometimes
     wraps its answer in the schema itself ({"properties": {...}}), which then fails validation.
     """
-    return get_llm().with_structured_output(schema, method="json_schema", strict=True)
+    llm = get_llm().with_structured_output(schema, method="json_schema", strict=True)
+    # One more try when a reply is malformed or rejected by schema validation; the Groq client already
+    # retries network errors, rate limits and server errors on its own (max_retries).
+    return llm.with_retry(
+        retry_if_exception_type=(OutputParserException, groq.BadRequestError), stop_after_attempt=2
+    )
