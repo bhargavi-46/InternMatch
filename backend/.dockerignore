@@ -1,0 +1,7 @@
+.venv
+.pgdata
+.cache
+.env
+tests
+__pycache__
+eval_results.md
