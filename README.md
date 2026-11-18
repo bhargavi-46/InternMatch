@@ -49,19 +49,28 @@ InternMatch collects live postings every day from official company job-board API
 open to students in India or remote, and ranks them against each student's profile. For every role it shows
 the skills the student already has, the skills they are missing, and how to prepare.
 
+After applying, it keeps helping: an application tracker with follow-up reminders, a study plan for each job built
+from its description, a daily quiz on the topics those jobs test, and a mock interview for the exact role. Everything
+runs on free tiers, and nothing asks the student to pay to apply.
+
 ---
 
 ## Key Features
 
 | Feature | Description |
 |---|---|
-| **Live job index** | Daily ingestion from the public Greenhouse, Lever, Ashby and SmartRecruiters job-board APIs (65 companies such as Swiggy, Razorpay, Meesho, CRED, Groww, Sarvam AI, Bosch, Databricks). No API keys needed. Edited postings are re-embedded and closed postings are deactivated. |
+| **Live job index** | Daily ingestion from the public Greenhouse, Lever, Ashby, SmartRecruiters and Workday careers APIs: 116 companies such as NVIDIA, Cisco, Intel, Salesforce, Deutsche Bank, Swiggy, Razorpay, Paytm, Meesho, Sarvam AI and Bosch. Only India and open-remote roles are kept. No API keys needed. Edited postings are re-embedded and closed postings are deactivated. |
+| **Student filters** | Tech roles only by default (Software, AI/ML, Data, DevOps/Cloud, Security, QA), so marketing or finance internships don't crowd out the matches. Filters for 6+ month internships and posting date, badges for internship length, start month (e.g. *Starts Jan 2027*) and new postings, and a warning on listings older than three months. |
 | **Resume parsing** | PDF → text → contact details redacted → LLM returns a schema-validated profile (skills, target roles, education, experience). Resumes are never stored. |
 | **Personalised ranking** | Vector retrieval on pgvector, then re-ranking on semantic fit, skill coverage, experience level and recency. *Save* and *Not for me* adapt the ranking to each student (Rocchio feedback). |
 | **Skill-gap analysis** | Every match shows matched and missing skills from a curated vocabulary of ~90 technical skills. |
 | **Explain my fit** | One structured LLM call returns a fit score, matched and missing skills, and up to three preparation steps, grounded in the posting. |
 | **AI career agent** | A LangGraph tool-calling agent that searches jobs, recommends roles, reads postings and checks skill gaps, with per-session memory. |
 | **Hybrid search** | Free-text search that fuses vector and full-text results with reciprocal rank fusion. |
+| **Application tracker** | Saved → Applied → Online test → Interview → Offer / Rejected, with dates, notes, weekly counts and reminders (apply to saved roles, follow up after 10 days, prepare for tests). Stored in the browser; no account needed. |
+| **Prep plan per job** | From the job description and the student's profile: topics to study by priority, free resources for each (from a hand-checked list, never AI-invented links), likely interview questions with answer hints, and a 7-day plan. |
+| **Daily practice quiz** | 10 multiple-choice questions a day on the topics of the jobs being tracked, with explanations, a streak, per-topic accuracy and spaced repetition (topics answered wrong come back sooner). |
+| **Mock interview** | A 6-question practice interview for a specific job, with feedback and a score after every answer and a summary at the end. |
 | **Offline evaluation** | Ranking metrics (P@k, nDCG, MRR) against student personas and an LLM grounding check. |
 
 ---
@@ -70,9 +79,9 @@ the skills the student already has, the skills they are missing, and how to prep
 
 ```mermaid
 flowchart TD
-    A[Greenhouse / Lever / Ashby / SmartRecruiters APIs] -->|daily GitHub Actions job| B[Ingestion pipeline]
+    A[Greenhouse / Lever / Ashby / SmartRecruiters / Workday APIs] -->|daily GitHub Actions job| B[Ingestion pipeline]
     B --> B1[Filter: India or remote]
-    B1 --> B2[Tag level and years of experience]
+    B1 --> B2[Tag level, years, role family,<br/>internship length and start month]
     B2 --> B3[Upsert + content hash]
     B3 --> B4[Embed with bge-small-en-v1.5]
     B4 --> C[(PostgreSQL + pgvector<br/>HNSW index)]
@@ -83,14 +92,16 @@ flowchart TD
     D --> D3["/resume/parse: PDF → redact → LLM structured output"]
     D --> D4["/jobs/{id}/explain: grounded fit explanation"]
     D --> D5["/agent/chat: LangGraph agent with memory"]
+    D --> D6["/jobs/{id}/prep, /quiz, /jobs/{id}/interview: interview coaching"]
 
-    D1 & D2 & D3 & D4 & D5 --> E[Next.js web app]
+    D1 & D2 & D3 & D4 & D5 & D6 --> E[Next.js web app<br/>tracker, quiz stats in localStorage]
 ```
 
 ### Ranking pipeline
 
 1. **Retrieve** – 150 nearest postings by cosine similarity (HNSW) plus 50 full-text matches.
-2. **Filter** – experience level (internship / entry level), remote only, city, maximum years of experience.
+2. **Filter** – experience level (internship / entry level), role family (tech roles by default), remote only, city,
+   maximum years of experience, minimum internship length, posting date.
 3. **Re-rank** – weighted score:
 
    | Signal | Weight | Source |
@@ -100,7 +111,7 @@ flowchart TD
    | Skill coverage | 0.10 | profile skills found in the posting |
    | Recency | 0.05 | exponential decay, 30-day scale |
 
-4. **Personalise** – the query vector moves toward saved roles (+0.35) and away from hidden roles (−0.20).
+4. **Personalise** – the query vector moves toward tracked roles (+0.35) and away from hidden roles (−0.20).
 
 ---
 
@@ -200,6 +211,9 @@ All external services used have a free tier: [Groq](https://console.groq.com),
 | `POST` | `/resume/parse` | PDF resume (≤ 5 MB) → structured profile | ✔ |
 | `POST` | `/jobs/{id}/explain` | LLM fit explanation for one job | ✔ |
 | `POST` | `/agent/chat` | Conversational agent, memory per `thread_id` | ✔ |
+| `POST` | `/jobs/{id}/prep` | Prep plan: topics with free resources, likely questions, 7-day plan | ✔ |
+| `POST` | `/quiz` | Multiple-choice practice questions for given topics and weak topics | ✔ |
+| `POST` | `/jobs/{id}/interview` | Next mock-interview message (stateless; the client sends the transcript) | ✔ |
 
 LLM endpoints are limited to 30 calls per 10 minutes per IP to stay within the Groq free quota.
 Full request and response schemas are in the interactive docs at `/docs`.
@@ -219,7 +233,7 @@ internship (gain 2) or entry-level role (gain 1).
 | Hybrid (RRF) | 0.057 | 0.043 | 0.099 | 0.092 |
 | **InternMatch ranker** | **0.314** | **0.257** | **0.604** | **0.663** |
 
-*2,411 active jobs, 7 personas, top-10 results.* Ranker weights were chosen with a small sweep on an earlier,
+*Measured on an earlier index of 2,411 active jobs, 7 personas, top-10 results.* Ranker weights were chosen with a small sweep on an earlier,
 smaller index, so treat the gap as indicative rather than proof. Absolute precision is limited by supply: about
 110 postings in the index are student roles on a given day.
 
@@ -276,11 +290,12 @@ To run the full stack in containers instead: `docker compose up`.
 InternMatch/
 ├── backend/
 │   ├── app/
-│   │   ├── ingest/          # job-board fetchers, filters, upsert, embedding
+│   │   ├── ingest/          # job-board fetchers, filters, tags, upsert, embedding
 │   │   ├── evals/           # personas, metrics, evaluation runner
 │   │   ├── main.py          # FastAPI app and routes
 │   │   ├── ranking.py       # retrieval, rank fusion, re-ranking, personalisation
 │   │   ├── agent.py         # fit explanations + LangGraph agent
+│   │   ├── coach.py         # prep plans, daily quiz, mock interview
 │   │   ├── resume.py        # PDF parsing + LLM profile extraction
 │   │   ├── skills.py        # skills vocabulary and extraction
 │   │   ├── embeddings.py    # local embedding model
@@ -292,8 +307,8 @@ InternMatch/
 ├── frontend/
 │   └── src/
 │       ├── app/             # Next.js pages and layout
-│       ├── components/      # profile, filters, match cards, search, chat
-│       └── lib/             # API client, types, storage helpers
+│       ├── components/      # profile, filters, match cards, search, chat, tracker, quiz, interview
+│       └── lib/             # API client, types, storage, tracker and quiz logic
 ├── .github/workflows/       # CI and daily job refresh
 ├── docker-compose.yml
 └── render.yaml
@@ -307,7 +322,8 @@ InternMatch/
 - **Local embeddings.** `bge-small-en-v1.5` runs on CPU, so embedding costs nothing and needs no API key.
 - **One database for everything.** pgvector keeps vectors, full-text search and relational filters in a single PostgreSQL query.
 - **Structured LLM outputs.** Resume parsing and fit explanations use JSON-schema structured output, validated with Pydantic.
-- **Privacy by default.** Emails and phone numbers are removed before a resume reaches the LLM, and resumes are never saved. Saved and hidden jobs live in the browser.
+- **Privacy by default.** Emails and phone numbers are removed before a resume reaches the LLM, and resumes are never saved. Tracked applications, notes, prep plans and quiz progress live in the browser.
+- **No invented links.** The LLM only classifies each study topic; links come from a short, hand-checked list of free resources.
 
 ---
 
@@ -315,6 +331,9 @@ InternMatch/
 
 - Coverage is limited to companies whose job boards are public; many Indian internships are posted only on portals without an API.
 - Experience level is inferred from titles and "N years of experience" phrases and can be wrong for unusual wording.
+- Internship length and start month are read from the posting text, so they are missing when a posting doesn't state them.
+- Quiz questions are AI-generated and checked for format, not reviewed by a person; an answer can occasionally be wrong.
+- Tracker and quiz progress are stored per browser, so they don't sync between devices.
 - Agent memory is held in the API process and resets when the server restarts.
 
 ---
@@ -322,6 +341,7 @@ InternMatch/
 ## Roadmap
 
 - [ ] Email alerts for new high-fit internships
-- [ ] More Indian company job boards
+- [ ] More Indian company job boards (many use ATSs without a public API)
+- [ ] Optional sign-in to sync the tracker and quiz progress across devices
 - [ ] Persistent agent memory in PostgreSQL
 - [ ] Larger, hand-labelled evaluation set

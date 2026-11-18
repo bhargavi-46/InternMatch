@@ -1,4 +1,14 @@
-import type { Explanation, Filters, Match, Profile, SearchHit, Stats } from "./types";
+import type {
+  Explanation,
+  Filters,
+  InterviewTurn,
+  Match,
+  PrepPlan,
+  Profile,
+  QuizQuestion,
+  SearchHit,
+  Stats,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -23,7 +33,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function postJson(body: unknown): RequestInit {
-  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
 }
 
 export const api = {
@@ -39,4 +53,9 @@ export const api = {
   explain: (jobId: number, profile: Profile) => request<Explanation>(`/jobs/${jobId}/explain`, postJson({ profile })),
   chat: (threadId: string, message: string, profile: Profile | null) =>
     request<{ reply: string }>("/agent/chat", postJson({ thread_id: threadId, message, profile })),
+  prep: (jobId: number, profile: Profile | null) => request<PrepPlan>(`/jobs/${jobId}/prep`, postJson({ profile })),
+  quiz: (body: { topics: string[]; weak_topics: string[]; avoid: string[]; count: number }) =>
+    request<{ questions: QuizQuestion[] }>("/quiz", postJson(body)),
+  interview: (jobId: number, profile: Profile | null, turns: InterviewTurn[]) =>
+    request<{ reply: string; done: boolean }>(`/jobs/${jobId}/interview`, postJson({ profile, turns })),
 };

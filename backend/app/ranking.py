@@ -11,15 +11,16 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.embeddings import embed_documents, embed_query, normalize
+from app.ingest.tags import TECH_FAMILIES, RoleFamily
 from app.models import Job
 from app.profile import StudentProfile
 from app.skills import extract_skills
@@ -38,6 +39,10 @@ class SearchFilters(BaseModel):
     remote_only: bool = False
     location: str | None = None
     max_years_experience: int | None = None
+    # Empty means every role family. The default hides non-technical roles (marketing, finance, HR...).
+    role_families: list[RoleFamily] = list(TECH_FAMILIES)
+    min_duration_months: int | None = Field(None, ge=1, le=12)  # internships that state at least this length
+    posted_within_days: int | None = Field(None, ge=1, le=365)
 
 
 @dataclass
@@ -68,6 +73,15 @@ def _filtered(filters: SearchFilters, exclude_ids: Iterable[int] = ()) -> Select
         stmt = stmt.where(
             or_(Job.min_years_experience.is_(None), Job.min_years_experience <= filters.max_years_experience)
         )
+    if filters.role_families:
+        family = Job.role_family.in_(filters.role_families)
+        # Jobs not tagged yet count as "other".
+        stmt = stmt.where(or_(family, Job.role_family.is_(None)) if "other" in filters.role_families else family)
+    if filters.min_duration_months is not None:
+        stmt = stmt.where(Job.duration_months >= filters.min_duration_months)
+    if filters.posted_within_days is not None:
+        since = datetime.now(timezone.utc) - timedelta(days=filters.posted_within_days)
+        stmt = stmt.where(Job.posted_at >= since)
     excluded = list(exclude_ids)
     if excluded:
         stmt = stmt.where(Job.id.not_in(excluded))

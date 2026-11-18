@@ -14,7 +14,7 @@ from pypdf.errors import PdfReadError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import agent
+from app import agent, coach
 from app.config import settings
 from app.db import init_db, session_dependency
 from app.embeddings import embed_documents, warm_up
@@ -92,6 +92,9 @@ class JobOut(BaseModel):
     url: str
     posted_at: datetime | None
     source: str
+    role_family: str | None
+    duration_months: int | None
+    start_month: str | None
 
 
 class JobDetail(JobOut):
@@ -138,6 +141,27 @@ class ChatRequest(BaseModel):
 
 class ChatReply(BaseModel):
     reply: str
+
+
+class PrepRequest(BaseModel):
+    profile: StudentProfile | None = None
+
+
+class QuizRequest(BaseModel):
+    topics: list[str] = Field(min_length=1, max_length=30)
+    weak_topics: list[str] = Field(default_factory=list, max_length=10)
+    avoid: list[str] = Field(default_factory=list, max_length=40)  # recent questions, so days don't repeat
+    count: int = Field(10, ge=3, le=10)
+
+
+class InterviewRequest(BaseModel):
+    profile: StudentProfile | None = None
+    turns: list[coach.InterviewTurn] = Field(default_factory=list, max_length=30)
+
+
+class InterviewReply(BaseModel):
+    reply: str
+    done: bool
 
 
 @app.get("/health")
@@ -224,3 +248,22 @@ def explain(job_id: int, body: ExplainRequest, db: Session = Depends(session_dep
 @app.post("/agent/chat", response_model=ChatReply, dependencies=[Depends(llm_rate_limit)])
 def agent_chat(body: ChatRequest) -> ChatReply:
     return ChatReply(reply=agent.chat(body.profile, body.thread_id, body.message))
+
+
+@app.post("/jobs/{job_id}/prep", response_model=coach.PrepPlan, dependencies=[Depends(llm_rate_limit)])
+def prep(job_id: int, body: PrepRequest, db: Session = Depends(session_dependency)) -> coach.PrepPlan:
+    return coach.prep_plan(body.profile, _get_job(db, job_id))
+
+
+@app.post("/quiz", response_model=coach.Quiz, dependencies=[Depends(llm_rate_limit)])
+def quiz(body: QuizRequest) -> coach.Quiz:
+    topics = [t.strip()[:80] for t in body.topics if t.strip()]
+    weak = [t.strip()[:80] for t in body.weak_topics if t.strip()]
+    avoid = [q[:150] for q in body.avoid]
+    return coach.make_quiz(topics, weak, avoid, body.count)
+
+
+@app.post("/jobs/{job_id}/interview", response_model=InterviewReply, dependencies=[Depends(llm_rate_limit)])
+def interview(job_id: int, body: InterviewRequest, db: Session = Depends(session_dependency)) -> InterviewReply:
+    reply, done = coach.interview_reply(body.profile, _get_job(db, job_id), body.turns)
+    return InterviewReply(reply=reply, done=done)

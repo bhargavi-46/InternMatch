@@ -1,12 +1,8 @@
 import re
 
+from app.ingest.sources import INDIA_PLACE as _INDIA
 from app.ingest.sources import Posting
 
-_INDIA = re.compile(
-    r"\b(india|bengaluru|bangalore|mumbai|delhi|new delhi|gurugram|gurgaon|noida|hyderabad|pune|"
-    r"chennai|kolkata|ahmedabad|jaipur|kochi|chandigarh)\b",
-    re.IGNORECASE,
-)
 _OPEN_REMOTE = re.compile(r"\b(anywhere|global|worldwide|apac|asia)\b", re.IGNORECASE)
 _INTERN = re.compile(r"\b(intern|interns|internship|co-?op|apprentice|apprenticeship|trainee)\b", re.IGNORECASE)
 _ENTRY = re.compile(

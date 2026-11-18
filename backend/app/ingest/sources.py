@@ -1,8 +1,9 @@
 import asyncio
 import html
 import re
+import weakref
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -21,6 +22,11 @@ class Posting:
     posted_at: datetime | None
 
 
+INDIA_PLACE = re.compile(
+    r"\b(india|bengaluru|bangalore|mumbai|delhi|new delhi|gurugram|gurgaon|noida|hyderabad|pune|"
+    r"chennai|kolkata|ahmedabad|jaipur|kochi|chandigarh)\b",
+    re.IGNORECASE,
+)
 _TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 
@@ -172,9 +178,142 @@ async def fetch_smartrecruiters(client: httpx.AsyncClient, slug: str, company: s
     return list(await asyncio.gather(*(detail(s) for s in summaries)))
 
 
+WORKDAY_MAX_POSTINGS = 400  # per company; big employers list thousands of India roles
+_WORKDAY_AGO = re.compile(r"(\d+)\+? days? ago", re.IGNORECASE)
+
+
+def _workday_values(facets: list[dict]):
+    """Yield (facet parameter, value) for every leaf value; Workday nests facet groups."""
+    for facet in facets:
+        for value in facet.get("values", []):
+            if "values" in value:
+                yield from _workday_values([value])
+            else:
+                yield facet["facetParameter"], value
+
+
+_INDIA_WORD = re.compile(r"\bindia\b", re.IGNORECASE)
+
+
+def _workday_india_facet(facets: list[dict]) -> tuple[str, list[str]] | None:
+    """The facet filter that limits a Workday site to India: a country value if the site has one,
+    otherwise every location value that names India ("Bangalore, India", "India, Pune")."""
+    values = list(_workday_values(facets))
+    for param, value in values:
+        if value.get("descriptor") == "India":
+            return param, [value["id"]]
+    by_param: dict[str, list[str]] = {}
+    for param, value in values:
+        if _INDIA_WORD.search(value.get("descriptor") or ""):
+            by_param.setdefault(param, []).append(value["id"])
+    if not by_param:
+        return None
+    param = max(by_param, key=lambda k: len(by_param[k]))
+    return param, by_param[param]
+
+
+def _workday_location(location: str) -> str:
+    if _INDIA_WORD.search(location):
+        return location
+    if INDIA_PLACE.search(location):
+        return f"{location}, India"  # "Mumbai, Nirlon Knowledge Park"
+    # The site was filtered to India, so a job whose main location is elsewhere also has an India one.
+    return f"{location} (also India)" if location else "India"
+
+
+def _workday_posted(info: dict) -> datetime | None:
+    if info.get("startDate"):
+        return datetime.fromisoformat(info["startDate"]).replace(tzinfo=timezone.utc)
+    text = info.get("postedOn") or ""
+    if "today" in text.lower():
+        return datetime.now(timezone.utc)
+    if "yesterday" in text.lower():
+        return datetime.now(timezone.utc) - timedelta(days=1)
+    m = _WORKDAY_AGO.search(text)
+    return datetime.now(timezone.utc) - timedelta(days=int(m.group(1))) if m else None
+
+
+# Workday rate-limits by IP across all its customers, so every Workday request in a run shares one limit.
+_workday_limits: "weakref.WeakKeyDictionary[httpx.AsyncClient, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_SENIOR_TITLE = re.compile(
+    r"\b(senior|sr|lead|staff|principal|director|head|vp|vice president|architect|manager)\b", re.IGNORECASE
+)
+
+
+async def _workday_send(client: httpx.AsyncClient, method: str, url: str, **kwargs) -> dict:
+    limit = _workday_limits.setdefault(client, asyncio.Semaphore(3))
+    for attempt in range(5):
+        last = attempt == 4
+        try:
+            async with limit:
+                # Without this header Workday answers 429 to every request, as if rate-limited.
+                resp = await client.request(method, url, headers={"Accept": "application/json"}, **kwargs)
+        except httpx.TransportError:  # Workday sometimes drops busy connections
+            if last:
+                raise
+        else:
+            if resp.status_code != 429 or last:
+                resp.raise_for_status()
+                return resp.json()
+        await asyncio.sleep(2 ** attempt + 1)  # 2, 3, 5, 9 seconds
+    raise AssertionError("unreachable")
+
+
+async def fetch_workday(client: httpx.AsyncClient, slug: str, company: str) -> list[Posting]:
+    """India postings from a Workday careers site's public JSON API (no key needed).
+
+    `slug` is "<tenant>.<wd host>/<site>", e.g. "nvidia.wd5/NVIDIAExternalCareerSite".
+    Clearly senior titles are skipped before fetching details, to keep the request count (and 429s) down.
+    """
+    host, site = slug.split("/", 1)
+    tenant = host.split(".", 1)[0]
+    root = f"https://{host}.myworkdayjobs.com"
+    base = f"{root}/wday/cxs/{tenant}/{site}"
+
+    async def page(offset: int, facets: dict) -> dict:
+        body = {"appliedFacets": facets, "limit": 20, "offset": offset, "searchText": ""}
+        return await _workday_send(client, "POST", f"{base}/jobs", json=body)
+
+    first = await page(0, {})
+    india = _workday_india_facet(first.get("facets", []))
+    if india is None:
+        return []  # no India filter on this site, so no India jobs to list
+    facets = {india[0]: india[1]}
+    data = await page(0, facets)
+    summaries, total = data["jobPostings"], min(data["total"], WORKDAY_MAX_POSTINGS)
+    while len(summaries) < total:
+        more = (await page(len(summaries), facets))["jobPostings"]
+        if not more:
+            break
+        summaries += more
+    summaries = [s for s in summaries if s.get("externalPath") and not _SENIOR_TITLE.search(s["title"])]
+
+    async def detail(summary: dict) -> Posting:
+        try:
+            info = (await _workday_send(client, "GET", f"{base}{summary['externalPath']}"))["jobPostingInfo"]
+        except (httpx.HTTPError, KeyError, ValueError):
+            # Keep the job (title, location, link) even if its description could not be loaded.
+            info = {"title": summary["title"], "location": summary.get("locationsText"), "postedOn": summary.get("postedOn")}
+        location = info.get("location") or summary.get("locationsText") or ""
+        return Posting(
+            source="workday",
+            external_id=f"{tenant}:{summary['externalPath'].rsplit('_', 1)[-1]}",
+            company=company,
+            title=info.get("title") or summary["title"],
+            location=_workday_location(location),
+            is_remote="remote" in location.lower() or "virtual" in location.lower(),
+            employment_type=None,
+            description=html_to_text(info.get("jobDescription")),
+            url=info.get("externalUrl") or f"{root}/{site}{summary['externalPath']}",
+            posted_at=_workday_posted(info),
+        )
+
+    return list(await asyncio.gather(*(detail(s) for s in summaries)))
+
 FETCHERS = {
     "greenhouse": fetch_greenhouse,
     "lever": fetch_lever,
     "ashby": fetch_ashby,
     "smartrecruiters": fetch_smartrecruiters,
+    "workday": fetch_workday,
 }

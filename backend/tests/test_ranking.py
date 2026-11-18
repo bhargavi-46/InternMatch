@@ -4,7 +4,7 @@ import pytest
 
 from app.evals.metrics import ndcg_at_k, precision_at_k, reciprocal_rank
 from app.models import Job
-from app.ranking import WEIGHTS, reciprocal_rank_fusion, score_job
+from app.ranking import WEIGHTS, SearchFilters, _filtered, reciprocal_rank_fusion, score_job
 
 NOW = datetime(2026, 11, 18, tzinfo=timezone.utc)
 
@@ -52,3 +52,29 @@ def test_metrics():
     assert ndcg_at_k([2, 1], [2, 1], 2) == pytest.approx(1.0)
     assert 0 < ndcg_at_k(gains, [2, 1], 5) < 1
     assert ndcg_at_k([0, 0], [], 2) == 0.0
+
+
+def _sql(filters: SearchFilters) -> str:
+    sql = str(_filtered(filters).compile(compile_kwargs={"literal_binds": True}))
+    return sql.split("WHERE", 1)[1]  # only the conditions
+
+
+def test_default_filters_hide_non_tech_roles():
+    sql = _sql(SearchFilters())
+    assert "role_family IN" in sql and "'non_tech'" not in sql and "'swe'" in sql
+    assert "role_family IS NULL" in sql  # untagged jobs count as "other"
+
+
+def test_role_family_filter_without_other_skips_untagged_jobs():
+    sql = _sql(SearchFilters(role_families=["ml_ai"]))
+    assert "'ml_ai'" in sql and "IS NULL" not in sql.split("role_family")[-1]
+
+
+def test_empty_role_families_means_all_roles():
+    assert "role_family" not in _sql(SearchFilters(role_families=[]))
+
+
+def test_duration_and_freshness_filters():
+    sql = _sql(SearchFilters(min_duration_months=6, posted_within_days=7))
+    assert "duration_months >= 6" in sql
+    assert "posted_at >=" in sql

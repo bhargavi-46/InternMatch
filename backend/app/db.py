@@ -8,11 +8,11 @@ from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Base
+from app.models import Base, Job
 
 log = logging.getLogger("db")
 
@@ -97,6 +97,34 @@ def init_db() -> None:
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_jobs_embedding ON jobs USING hnsw (embedding vector_cosine_ops)")
         )
+        # create_all() does not add columns to an existing table, so add the ones introduced later.
+        for column, kind in NEW_COLUMNS.items():
+            conn.execute(text(f"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS {column} {kind}"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_role_family ON jobs (role_family)"))
+    retag_jobs(engine)
+
+
+NEW_COLUMNS = {"role_family": "varchar(20)", "duration_months": "integer", "start_month": "varchar(20)",
+               "tags_version": "integer"}
+
+
+def retag_jobs(engine: Engine) -> int:
+    """Recompute tags for jobs tagged by older rules (or never tagged). Fast: pure Python on ~thousands of rows."""
+    from app.ingest.tags import TAGS_VERSION, job_tags
+
+    with Session(engine) as session, session.begin():
+        stale = session.execute(
+            select(Job.id, Job.title, Job.description, Job.experience_level).where(
+                or_(Job.tags_version.is_(None), Job.tags_version != TAGS_VERSION)
+            )
+        ).all()
+        if stale:
+            session.execute(
+                update(Job), [{"id": r.id, **job_tags(r.title, r.description, r.experience_level)} for r in stale]
+            )
+    if stale:
+        log.info("Re-tagged %d jobs", len(stale))
+    return len(stale)
 
 
 def session_dependency() -> Iterator[Session]:

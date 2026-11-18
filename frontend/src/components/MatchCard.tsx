@@ -3,19 +3,20 @@
 import { useState } from "react";
 
 import { api } from "@/lib/api";
-import type { Explanation, Match, Profile } from "@/lib/types";
+import type { AppStatus, Explanation, Match, Profile } from "@/lib/types";
 
 import { JobHeader } from "./JobHeader";
+import { StatusSelect } from "./StatusSelect";
 
 interface Props {
   match: Match;
   profile: Profile;
-  saved: boolean;
-  onToggleSave: () => void;
+  status: AppStatus | null;
+  onStatus: (status: AppStatus | null) => void;
   onHide: () => void;
 }
 
-export function MatchCard({ match, profile, saved, onToggleSave, onHide }: Props) {
+export function MatchCard({ match, profile, status, onStatus, onHide }: Props) {
   const [explanation, setExplanation] = useState<Explanation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,16 +98,7 @@ export function MatchCard({ match, profile, saved, onToggleSave, onHide }: Props
             {loading ? "Thinking…" : "Explain my fit"}
           </button>
         )}
-        <button
-          type="button"
-          onClick={onToggleSave}
-          aria-pressed={saved}
-          className={`rounded-md px-3 py-1.5 font-medium ring-1 ${
-            saved ? "bg-emerald-50 text-emerald-800 ring-emerald-300" : "text-slate-700 ring-slate-300 hover:bg-slate-50"
-          }`}
-        >
-          {saved ? "Saved" : "Save"}
-        </button>
+        <StatusSelect status={status} onChange={onStatus} />
         <button type="button" onClick={onHide} className="ml-auto text-slate-500 hover:text-slate-800">
           Not for me
         </button>

@@ -33,7 +33,7 @@ from app.ranking import (
 from app.skills import extract_skills
 
 K = 10
-ALL_LEVELS = SearchFilters(levels=[])
+ALL_LEVELS = SearchFilters(levels=[], role_families=[])
 GAIN = {"internship": 2, "entry_level": 1}
 RESULTS_FILE = Path(__file__).resolve().parents[2] / "eval_results.md"
 

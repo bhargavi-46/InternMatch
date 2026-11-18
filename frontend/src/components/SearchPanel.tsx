@@ -3,13 +3,21 @@
 import { useState } from "react";
 
 import { api } from "@/lib/api";
-import type { Filters, SearchHit } from "@/lib/types";
+import type { Applications } from "@/lib/tracker";
+import type { AppStatus, Filters, Job, SearchHit } from "@/lib/types";
 
 import { JobHeader } from "./JobHeader";
+import { StatusSelect } from "./StatusSelect";
 
 const EXAMPLES = ["remote machine learning internship", "backend Node.js Bengaluru", "security engineer intern"];
 
-export function SearchPanel({ filters }: { filters: Filters }) {
+interface Props {
+  filters: Filters;
+  apps: Applications;
+  onStatus: (job: Job, status: AppStatus | null) => void;
+}
+
+export function SearchPanel({ filters, apps, onStatus }: Props) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,11 +71,24 @@ export function SearchPanel({ filters }: { filters: Filters }) {
         </div>
       )}
       {error && <p className="rounded-md bg-red-50 p-2.5 text-sm text-red-700">{error}</p>}
-      {hits?.length === 0 && <p className="text-sm text-slate-600">No roles found. Try other words or loosen the filters.</p>}
+      {hits?.length === 0 && (
+        <p className="text-sm text-slate-600">No roles found. Try other words or loosen the filters.</p>
+      )}
       <div className="space-y-3">
         {hits?.map((hit) => (
           <article key={hit.job.id} className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <JobHeader job={hit.job} />
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              <a
+                href={hit.job.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md bg-slate-900 px-3 py-1.5 font-medium text-white hover:bg-slate-700"
+              >
+                Apply
+              </a>
+              <StatusSelect status={apps[hit.job.id]?.status ?? null} onChange={(s) => onStatus(hit.job, s)} />
+            </div>
           </article>
         ))}
       </div>

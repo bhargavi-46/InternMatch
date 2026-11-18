@@ -24,6 +24,7 @@ from app.ingest.boards import BOARDS, Board
 from app.ingest.embed import embed_pending
 from app.ingest.filters import experience_level, is_relevant_location, min_years_experience
 from app.ingest.sources import FETCHERS, Posting
+from app.ingest.tags import job_tags
 from app.models import Job
 
 log = logging.getLogger("ingest")
@@ -31,6 +32,7 @@ log = logging.getLogger("ingest")
 UPDATED_COLUMNS = [
     "company", "title", "location", "is_remote", "employment_type", "experience_level",
     "min_years_experience", "description", "url", "posted_at", "last_seen_at", "is_active", "content_hash",
+    "role_family", "duration_months", "start_month", "tags_version",
 ]
 
 
@@ -67,6 +69,7 @@ async def fetch_all(started: datetime) -> list[Batch]:
 
 def to_row(posting: Posting, seen_at: datetime) -> dict:
     content = f"{posting.title}\n{posting.description}"
+    level = experience_level(posting)
     return {
         "source": posting.source,
         "external_id": posting.external_id,
@@ -75,7 +78,7 @@ def to_row(posting: Posting, seen_at: datetime) -> dict:
         "location": posting.location[:500],
         "is_remote": posting.is_remote,
         "employment_type": posting.employment_type,
-        "experience_level": experience_level(posting),
+        "experience_level": level,
         "min_years_experience": min_years_experience(posting.description),
         "description": posting.description,
         "url": posting.url,
@@ -83,6 +86,7 @@ def to_row(posting: Posting, seen_at: datetime) -> dict:
         "last_seen_at": seen_at,
         "is_active": True,
         "content_hash": hashlib.sha256(content.encode()).hexdigest(),
+        **job_tags(posting.title, posting.description, level),
     }
 
 

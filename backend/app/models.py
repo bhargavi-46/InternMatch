@@ -25,6 +25,11 @@ class Job(Base):
     employment_type: Mapped[str | None] = mapped_column(String(50))
     experience_level: Mapped[str] = mapped_column(String(20), index=True)
     min_years_experience: Mapped[int | None]
+    # Tags from app/ingest/tags.py
+    role_family: Mapped[str | None] = mapped_column(String(20), index=True)
+    duration_months: Mapped[int | None]
+    start_month: Mapped[str | None] = mapped_column(String(20))
+    tags_version: Mapped[int | None]
     description: Mapped[str] = mapped_column(Text)
     url: Mapped[str] = mapped_column(String(1000))
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

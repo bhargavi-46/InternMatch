@@ -1,19 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import { api } from "@/lib/api";
 import { useStoredState } from "@/lib/storage";
 import type { Profile } from "@/lib/types";
+
+import { Markdown } from "./Markdown";
 
 interface Message {
   role: "user" | "assistant";
   text: string;
 }
 
-const STARTERS = ["Which of my matches should I apply to first?", "Find remote AI internships", "What should I learn next?"];
+const STARTERS = [
+  "Which of my matches should I apply to first?",
+  "Find remote AI internships",
+  "What should I learn next?",
+];
 
 export function ChatPanel({ profile, onClose }: { profile: Profile | null; onClose: () => void }) {
   const [threadId] = useStoredState("im.thread", () => crypto.randomUUID(), "session");
@@ -50,7 +54,12 @@ export function ChatPanel({ profile, onClose }: { profile: Profile | null; onClo
           <p className="font-semibold">Ask InternMatch</p>
           <p className="text-xs text-slate-500">Searches live postings and checks your skill gaps</p>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close chat" className="text-xl text-slate-400 hover:text-slate-700">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close chat"
+          className="text-xl text-slate-400 hover:text-slate-700"
+        >
           ×
         </button>
       </header>
@@ -79,34 +88,7 @@ export function ChatPanel({ profile, onClose }: { profile: Profile | null; onClo
                   : "max-w-[95%] rounded-lg bg-slate-50 px-3 py-2 text-slate-800 ring-1 ring-slate-200"
               }
             >
-              {m.role === "user" ? (
-                m.text
-              ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    table: ({ children }) => (
-                      <div className="my-2 overflow-x-auto">
-                        <table className="w-full border-collapse text-xs">{children}</table>
-                      </div>
-                    ),
-                    th: ({ children }) => (
-                      <th className="border border-slate-200 bg-slate-100 px-2 py-1 text-left font-semibold">{children}</th>
-                    ),
-                    td: ({ children }) => <td className="border border-slate-200 px-2 py-1 align-top">{children}</td>,
-                    a: ({ href, children }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">
-                        {children}
-                      </a>
-                    ),
-                    ul: ({ children }) => <ul className="my-1 list-disc space-y-1 pl-5">{children}</ul>,
-                    ol: ({ children }) => <ol className="my-1 list-decimal space-y-1 pl-5">{children}</ol>,
-                    p: ({ children }) => <p className="my-1">{children}</p>,
-                  }}
-                >
-                  {m.text}
-                </ReactMarkdown>
-              )}
+              {m.role === "user" ? m.text : <Markdown>{m.text}</Markdown>}
             </div>
           </div>
         ))}
