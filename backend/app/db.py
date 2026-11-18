@@ -1,3 +1,9 @@
+import atexit
+import logging
+import os
+import subprocess
+import sys
+import time
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
@@ -8,16 +14,65 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Base
 
-LOCAL_PGDATA = Path(__file__).resolve().parent.parent / ".pgdata"
-_local_server = None  # keep a reference so the embedded server stays up for this process
+log = logging.getLogger("db")
+
+# Kept outside the project folder: sync tools such as OneDrive lock database files and slow Postgres down.
+LOCAL_ROOT = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share") / "InternMatch"
+LOCAL_PGDATA = LOCAL_ROOT / "pgdata"
+LOCAL_PGLOG = LOCAL_ROOT / "postgres.log"  # outside the data folder, so crash recovery never trips over it
+START_TIMEOUT = 180  # seconds; recovery after an unclean stop can take a while on slow disks
+
+
+def _running_postmaster():
+    from pgserver.utils import PostmasterInfo
+
+    info = PostmasterInfo.read_from_pgdata(LOCAL_PGDATA)
+    if info is None or not info.is_running() or "postgres" not in info.process.name().lower():
+        return None  # missing, or a stale postmaster.pid left by a crash
+    return info
+
+
+def _stop_local_postgres() -> None:
+    import pgserver
+
+    try:
+        pgserver.pg_ctl(["-m", "fast", "-w", "stop"], pgdata=LOCAL_PGDATA, timeout=60)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        log.warning("Could not stop the local database cleanly; it will recover on the next start.")
 
 
 def _local_database_url() -> str:
-    global _local_server
+    """Start (or reuse) an embedded Postgres + pgvector server and return its URL."""
     import pgserver  # dev dependency: embedded Postgres with pgvector
+    from pgserver.utils import find_suitable_port
 
-    _local_server = pgserver.get_server(LOCAL_PGDATA, cleanup_mode="stop")
-    return _local_server.get_uri()
+    LOCAL_ROOT.mkdir(parents=True, exist_ok=True)
+    if not (LOCAL_PGDATA / "PG_VERSION").exists():
+        log.info("Creating local database in %s", LOCAL_PGDATA)
+        pgserver.initdb(["--auth=trust", "--encoding=utf8", "-U", "postgres"], pgdata=LOCAL_PGDATA)
+
+    if _running_postmaster() is None:
+        log.info("Starting local database (this can take a minute after an unclean stop)...")
+        # Detach Postgres from this terminal so Ctrl+C stops only the app, not the database processes.
+        detach = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
+        port = find_suitable_port("127.0.0.1")
+        args = ["-w", "-t", str(START_TIMEOUT), "-o", '-h "127.0.0.1"', "-o", f"-p {port}", "-l", str(LOCAL_PGLOG)]
+        try:
+            pgserver.pg_ctl([*args, "start"], pgdata=LOCAL_PGDATA, timeout=START_TIMEOUT + 30, **detach)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Local database failed to start. See the log: {LOCAL_PGLOG}") from exc
+        atexit.register(_stop_local_postgres)  # only the process that started the server stops it
+
+    deadline = time.monotonic() + START_TIMEOUT
+    while (info := _running_postmaster()) is None or info.status != "ready":
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"Local database did not become ready. See the log: {LOCAL_PGLOG}")
+        time.sleep(1)
+    return info.get_uri()
 
 
 @lru_cache

@@ -128,7 +128,8 @@ flowchart TD
 - A free [Groq API key](https://console.groq.com/keys)
 
 No Docker or database installation is needed for local development: `DATABASE_URL=local` starts an embedded
-PostgreSQL with pgvector inside `backend/.pgdata`.
+PostgreSQL with pgvector, stored in `%LOCALAPPDATA%\InternMatch` on Windows (`~/.local/share/InternMatch` elsewhere),
+outside the project so sync tools such as OneDrive never touch database files.
 
 ### 1. Clone
 
@@ -249,8 +250,7 @@ Both run on every push and pull request through GitHub Actions (`.github/workflo
 | Symptom | Fix |
 |---|---|
 | `GROQ_API_KEY is not set` in the app | Add the key to `backend/.env` and restart the API. |
-| `pg_ctl ... timed out` on start | The embedded database is recovering after an unclean stop. Run the command again. Stop the API with `Ctrl+C` so the database shuts down cleanly. |
-| Project inside OneDrive / Dropbox | Sync tools can lock database files. Pause syncing or keep the project in a non-synced folder. |
+| `Local database did not become ready` | Read `postgres.log` in the folder named in the error. Stop the API with `Ctrl+C`; the database shuts down with it. |
 | `429 Too Many Requests` | The AI endpoints allow 30 calls per 10 minutes per IP. Wait and retry. |
 
 ---
