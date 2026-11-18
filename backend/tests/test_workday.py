@@ -41,8 +41,7 @@ def test_india_facet_falls_back_to_city_values():
 
 
 def test_fetch_workday_filters_to_india_pages_and_skips_senior_titles(monkeypatch):
-    real_sleep = asyncio.sleep
-    monkeypatch.setattr(sources.asyncio, "sleep", lambda _: real_sleep(0))
+    monkeypatch.setattr(sources, "_retry_delay", lambda resp, attempt: 0.0)
     calls = {"rate_limited": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -85,3 +84,33 @@ def test_workday_location_labels():
     assert _workday_location("Mumbai, Nirlon Knowledge Park") == "Mumbai, Nirlon Knowledge Park, India"
     assert _workday_location("Remote-Philippines") == "Remote-Philippines (also India)"
     assert _workday_location("") == "India"
+
+
+def test_retry_delay_honours_retry_after_and_backs_off():
+    assert sources._retry_delay(httpx.Response(429, headers={"Retry-After": "30"}), 0) == 30
+    assert sources._retry_delay(httpx.Response(429, headers={"Retry-After": "9999"}), 0) == sources.WORKDAY_MAX_WAIT
+    assert [sources._retry_delay(httpx.Response(429), a) for a in range(4)] == [5, 10, 20, 40]
+    assert sources._retry_delay(None, 1) == 10  # dropped connection: same back-off
+
+
+def test_a_429_pauses_every_workday_request(monkeypatch):
+    monkeypatch.setattr(sources, "_retry_delay", lambda resp, attempt: 0.2)
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.url.path, asyncio.get_event_loop().time()))
+        if request.url.path == "/a" and len(sent) == 1:
+            return httpx.Response(429)
+        return httpx.Response(200, json={})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            first = asyncio.create_task(sources._workday_send(client, "GET", "https://x.test/a"))
+            await asyncio.sleep(0.05)  # /a has been rate-limited by now
+            await sources._workday_send(client, "GET", "https://x.test/b")
+            await first
+
+    asyncio.run(run())
+    start = sent[0][1]
+    assert sorted(path for path, _ in sent) == ["/a", "/a", "/b"]
+    assert all(t - start >= 0.19 for _, t in sent[1:])  # nothing was sent during the pause

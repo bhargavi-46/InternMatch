@@ -233,19 +233,34 @@ def _workday_posted(info: dict) -> datetime | None:
     return datetime.now(timezone.utc) - timedelta(days=int(m.group(1))) if m else None
 
 
-# Workday rate-limits by IP across all its customers, so every Workday request in a run shares one limit.
+# Workday rate-limits by IP across all its customers, so every Workday request in a run shares one limit,
+# and a 429 pauses all of them (not just the request that got it) until Workday's wait time has passed.
 _workday_limits: "weakref.WeakKeyDictionary[httpx.AsyncClient, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_workday_pause_until: "weakref.WeakKeyDictionary[httpx.AsyncClient, float]" = weakref.WeakKeyDictionary()
+WORKDAY_MAX_WAIT = 120  # seconds; ignore longer Retry-After values and give up on that board instead
 _SENIOR_TITLE = re.compile(
     r"\b(senior|sr|lead|staff|principal|director|head|vp|vice president|architect|manager)\b", re.IGNORECASE
 )
 
 
+def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
+    """Seconds to wait before retrying: Workday's Retry-After when it sends one, else 5, 10, 20, 40 seconds."""
+    header = resp.headers.get("retry-after", "") if resp is not None else ""
+    if header.strip().isdigit():
+        return min(float(header), WORKDAY_MAX_WAIT)
+    return 5.0 * 2**attempt
+
+
 async def _workday_send(client: httpx.AsyncClient, method: str, url: str, **kwargs) -> dict:
-    limit = _workday_limits.setdefault(client, asyncio.Semaphore(3))
+    limit = _workday_limits.setdefault(client, asyncio.Semaphore(2))
+    loop = asyncio.get_running_loop()
     for attempt in range(5):
         last = attempt == 4
+        resp = None
         try:
             async with limit:
+                while (wait := _workday_pause_until.get(client, 0.0) - loop.time()) > 0:
+                    await asyncio.sleep(wait)
                 # Without this header Workday answers 429 to every request, as if rate-limited.
                 resp = await client.request(method, url, headers={"Accept": "application/json"}, **kwargs)
         except httpx.TransportError:  # Workday sometimes drops busy connections
@@ -255,7 +270,10 @@ async def _workday_send(client: httpx.AsyncClient, method: str, url: str, **kwar
             if resp.status_code != 429 or last:
                 resp.raise_for_status()
                 return resp.json()
-        await asyncio.sleep(2 ** attempt + 1)  # 2, 3, 5, 9 seconds
+        delay = _retry_delay(resp, attempt)
+        if resp is not None:  # rate-limited: hold back every Workday request, not just this one
+            _workday_pause_until[client] = max(_workday_pause_until.get(client, 0.0), loop.time() + delay)
+        await asyncio.sleep(delay)
     raise AssertionError("unreachable")
 
 

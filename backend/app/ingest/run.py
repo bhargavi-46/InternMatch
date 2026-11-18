@@ -12,7 +12,7 @@ import hashlib
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import ColumnElement, and_, case, update
@@ -28,6 +28,8 @@ from app.ingest.tags import job_tags
 from app.models import Job
 
 log = logging.getLogger("ingest")
+
+MAX_UNSEEN_DAYS = 14  # hide jobs not seen in a successful fetch for this long
 
 UPDATED_COLUMNS = [
     "company", "title", "location", "is_remote", "employment_type", "experience_level",
@@ -103,6 +105,9 @@ def save(batches: list[Batch], started: datetime) -> None:
                 set_["embedding"] = case((Job.content_hash == new.content_hash, Job.embedding), else_=None)
                 session.execute(stmt.on_conflict_do_update(index_elements=["source", "external_id"], set_=set_))
             session.execute(update(Job).where(batch.stale).values(is_active=False))
+        # A board whose fetch keeps failing keeps its old jobs, but only for so long: they may have closed.
+        expired = started - timedelta(days=MAX_UNSEEN_DAYS)
+        session.execute(update(Job).where(Job.is_active, Job.last_seen_at < expired).values(is_active=False))
 
 
 def main() -> None:
