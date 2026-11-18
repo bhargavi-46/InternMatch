@@ -1,4 +1,4 @@
-"""Fetch jobs from public job boards and Adzuna, and upsert the relevant ones into Postgres.
+"""Fetch jobs from public company job boards and upsert the relevant ones into Postgres.
 
 Usage (from backend/):
     uv run python -m app.ingest.run --dry-run   # fetch + filter, print a summary only
@@ -12,25 +12,21 @@ import hashlib
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import ColumnElement, and_, case, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.db import get_engine, init_db
 from app.ingest.boards import BOARDS, Board
 from app.ingest.embed import embed_pending
 from app.ingest.filters import experience_level, is_relevant_location, min_years_experience
-from app.ingest.sources import FETCHERS, Posting, fetch_adzuna
+from app.ingest.sources import FETCHERS, Posting
 from app.models import Job
 
 log = logging.getLogger("ingest")
-
-# Adzuna is a search API, so a job missing from today's results may still be open.
-ADZUNA_STALE_AFTER = timedelta(days=7)
 
 UPDATED_COLUMNS = [
     "company", "title", "location", "is_remote", "employment_type", "experience_level",
@@ -46,7 +42,7 @@ class Batch:
 
 
 def _describe(exc: Exception) -> str:
-    # Never log the request URL: Adzuna credentials travel in the query string.
+    # Short, URL-free messages keep the log readable.
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
     return type(exc).__name__
@@ -66,21 +62,7 @@ async def fetch_all(started: datetime) -> list[Batch]:
                     postings = None
             return Batch(board.company, postings, stale)
 
-        async def fetch_adzuna_batch() -> Batch:
-            stale = and_(Job.source == "adzuna", Job.last_seen_at < started - ADZUNA_STALE_AFTER)
-            try:
-                postings = await fetch_adzuna(client, settings.adzuna_app_id, settings.adzuna_app_key)
-            except (httpx.HTTPError, KeyError, ValueError) as exc:
-                log.warning("skipping Adzuna: %s", _describe(exc))
-                postings = None
-            return Batch("Adzuna", postings, stale)
-
-        tasks = [fetch_board(b) for b in BOARDS]
-        if settings.adzuna_app_id and settings.adzuna_app_key:
-            tasks.append(fetch_adzuna_batch())
-        else:
-            log.info("ADZUNA_APP_ID / ADZUNA_APP_KEY not set; skipping Adzuna")
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*(fetch_board(b) for b in BOARDS))
 
 
 def to_row(posting: Posting, seen_at: datetime) -> dict:
@@ -124,7 +106,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="fetch and filter only; do not touch the database")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)  # its request log would print API keys
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one log line per request is too noisy
 
     started = datetime.now(timezone.utc)
     fetched = asyncio.run(fetch_all(started))

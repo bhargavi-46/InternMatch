@@ -55,7 +55,7 @@ the skills the student already has, the skills they are missing, and how to prep
 
 | Feature | Description |
 |---|---|
-| **Live job index** | Daily ingestion from Greenhouse, Lever and Ashby job boards (43 companies such as Groww, Meesho, CRED, Paytm, Sarvam AI, Databricks, MongoDB) plus the Adzuna India API. Edited postings are re-embedded and closed postings are deactivated. |
+| **Live job index** | Daily ingestion from the public Greenhouse, Lever, Ashby and SmartRecruiters job-board APIs (65 companies such as Swiggy, Razorpay, Meesho, CRED, Groww, Sarvam AI, Bosch, Databricks). No API keys needed. Edited postings are re-embedded and closed postings are deactivated. |
 | **Resume parsing** | PDF → text → contact details redacted → LLM returns a schema-validated profile (skills, target roles, education, experience). Resumes are never stored. |
 | **Personalised ranking** | Vector retrieval on pgvector, then re-ranking on semantic fit, skill coverage, experience level and recency. *Save* and *Not for me* adapt the ranking to each student (Rocchio feedback). |
 | **Skill-gap analysis** | Every match shows matched and missing skills from a curated vocabulary of ~90 technical skills. |
@@ -70,7 +70,7 @@ the skills the student already has, the skills they are missing, and how to prep
 
 ```mermaid
 flowchart TD
-    A[Greenhouse / Lever / Ashby / Adzuna APIs] -->|daily GitHub Actions job| B[Ingestion pipeline]
+    A[Greenhouse / Lever / Ashby / SmartRecruiters APIs] -->|daily GitHub Actions job| B[Ingestion pipeline]
     B --> B1[Filter: India or remote]
     B1 --> B2[Tag level and years of experience]
     B2 --> B3[Upsert + content hash]
@@ -143,7 +143,7 @@ cd InternMatch
 cd backend
 uv sync
 cp .env.example .env              # add your GROQ_API_KEY
-uv run python -m app.ingest.run   # fetch and embed jobs (first run ~8 min)
+uv run python -m app.ingest.run   # fetch and embed jobs (first run ~20 min)
 uv run uvicorn app.main:app --port 8000
 ```
 
@@ -172,8 +172,6 @@ Open http://localhost:3000.
 | `DATABASE_URL` | Yes | `local` | `local` for embedded Postgres, or a PostgreSQL connection string (e.g. Neon) |
 | `GROQ_API_KEY` | For AI features | – | Resume parsing, fit explanations, chat |
 | `GROQ_MODEL` | No | `openai/gpt-oss-120b` | Any Groq chat model with structured output |
-| `ADZUNA_APP_ID` | No | – | Adds internship and fresher listings across India |
-| `ADZUNA_APP_KEY` | No | – | Used with `ADZUNA_APP_ID` |
 | `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated frontend URLs |
 
 ### Frontend (`frontend/.env.local`)
@@ -183,7 +181,7 @@ Open http://localhost:3000.
 | `NEXT_PUBLIC_API_URL` | No | `http://localhost:8000` | Backend base URL |
 
 All external services used have a free tier: [Groq](https://console.groq.com),
-[Adzuna](https://developer.adzuna.com), [Neon](https://neon.tech), [Render](https://render.com),
+[Neon](https://neon.tech), [Render](https://render.com),
 [Vercel](https://vercel.com).
 
 ---
@@ -209,20 +207,20 @@ Full request and response schemas are in the interactive docs at `/docs`.
 
 ## Evaluation
 
-Ranking quality is measured on the live index against student personas (ML/AI, backend, frontend, security,
-product, support engineering). A posting is relevant when its title matches the persona's role and it is an
+Ranking quality is measured on the live index against student personas (ML/AI, backend, frontend, data analyst,
+security, product, support engineering). A posting is relevant when its title matches the persona's role and it is an
 internship (gain 2) or entry-level role (gain 1).
 
 | Method | P@5 | P@10 | nDCG@10 | MRR |
 |---|---|---|---|---|
 | Keyword (Postgres full-text) | 0.000 | 0.000 | 0.000 | 0.000 |
-| Semantic (pgvector) | 0.267 | 0.150 | 0.505 | 0.531 |
-| Hybrid (RRF) | 0.067 | 0.067 | 0.226 | 0.188 |
-| **InternMatch ranker** | **0.300** | **0.200** | **0.745** | **0.806** |
+| Semantic (pgvector) | 0.114 | 0.143 | 0.247 | 0.243 |
+| Hybrid (RRF) | 0.057 | 0.043 | 0.099 | 0.092 |
+| **InternMatch ranker** | **0.314** | **0.257** | **0.604** | **0.663** |
 
-*1,010 active jobs, 6 personas, top-10 results.* Ranker weights were chosen with a small sweep on the same
-personas, so treat the gap as indicative. Absolute precision is limited by supply: only ~30 postings in the
-index are student roles on a given day.
+*2,411 active jobs, 7 personas, top-10 results.* Ranker weights were chosen with a small sweep on an earlier,
+smaller index, so treat the gap as indicative rather than proof. Absolute precision is limited by supply: about
+110 postings in the index are student roles on a given day.
 
 ```bash
 cd backend
@@ -246,12 +244,23 @@ Both run on every push and pull request through GitHub Actions (`.github/workflo
 
 ---
 
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `GROQ_API_KEY is not set` in the app | Add the key to `backend/.env` and restart the API. |
+| `pg_ctl ... timed out` on start | The embedded database is recovering after an unclean stop. Run the command again. Stop the API with `Ctrl+C` so the database shuts down cleanly. |
+| Project inside OneDrive / Dropbox | Sync tools can lock database files. Pause syncing or keep the project in a non-synced folder. |
+| `429 Too Many Requests` | The AI endpoints allow 30 calls per 10 minutes per IP. Wait and retry. |
+
+---
+
 ## Deployment
 
 | Step | Service | Action |
 |---|---|---|
 | 1 | **Neon** | Create a project and copy the connection string. |
-| 2 | **GitHub Actions** | Add repository secrets `DATABASE_URL` (and optionally `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`). Run the *Refresh jobs* workflow once; it then runs daily at 08:00 IST. |
+| 2 | **GitHub Actions** | Add the repository secret `DATABASE_URL`. Run the *Refresh jobs* workflow once; it then runs daily at 08:00 IST. |
 | 3 | **Render** | *New → Blueprint* → select this repo (`render.yaml`). Set `DATABASE_URL`, `GROQ_API_KEY`, `CORS_ORIGINS`. |
 | 4 | **Vercel** | Import the repo with root directory `frontend` and set `NEXT_PUBLIC_API_URL` to the Render URL. |
 
@@ -267,7 +276,7 @@ To run the full stack in containers instead: `docker compose up`.
 InternMatch/
 ├── backend/
 │   ├── app/
-│   │   ├── ingest/          # job-board + Adzuna fetchers, filters, upsert, embedding
+│   │   ├── ingest/          # job-board fetchers, filters, upsert, embedding
 │   │   ├── evals/           # personas, metrics, evaluation runner
 │   │   ├── main.py          # FastAPI app and routes
 │   │   ├── ranking.py       # retrieval, rank fusion, re-ranking, personalisation
@@ -304,7 +313,7 @@ InternMatch/
 
 ## Known Limitations
 
-- Adzuna returns only a description snippet, so its matches rely more on job titles.
+- Coverage is limited to companies whose job boards are public; many Indian internships are posted only on portals without an API.
 - Experience level is inferred from titles and "N years of experience" phrases and can be wrong for unusual wording.
 - Agent memory is held in the API process and resets when the server restarts.
 

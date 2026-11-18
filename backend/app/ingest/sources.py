@@ -1,3 +1,4 @@
+import asyncio
 import html
 import re
 from dataclasses import dataclass
@@ -113,67 +114,67 @@ async def fetch_ashby(client: httpx.AsyncClient, slug: str, company: str) -> lis
     return postings
 
 
-ADZUNA_QUERIES: list[dict[str, str]] = [
-    {"what_or": "intern internship trainee fresher", "category": "it-jobs"},
-    {"what": "software engineer intern"},
-    {"what": "machine learning intern"},
-    {"what": "data science intern"},
-    {"what": "software developer fresher"},
-]
-_REMOTE = re.compile(r"\b(remote|work from home|wfh)\b", re.IGNORECASE)
+# SmartRecruiters tags each posting with a level; pass the student-level ones on to the classifier.
+_SR_LEVELS = {"internship": "internship", "entry_level": "entry_level"}
+_SR_SECTIONS = ("jobDescription", "qualifications", "additionalInformation")
 
 
-def _adzuna_posting(job: dict) -> Posting:
-    title = html_to_text(job["title"])
-    description = html_to_text(job.get("description"))
-    location = (job.get("location") or {}).get("display_name") or ""
-    if "india" not in location.lower():
-        location = f"{location}, India" if location else "India"
+def _smartrecruiters_posting(job: dict, company: str) -> Posting:
+    """Build a posting from a SmartRecruiters detail response (or a list summary, which has no jobAd)."""
+    location = job.get("location") or {}
+    sections = (job.get("jobAd") or {}).get("sections") or {}
+    level = (job.get("experienceLevel") or {}).get("id")
+    employment = job.get("typeOfEmployment") or {}
+    if employment.get("id") in {"intern", "internship"}:
+        level = "internship"
     return Posting(
-        source="adzuna",
+        source="smartrecruiters",
         external_id=str(job["id"]),
-        company=((job.get("company") or {}).get("display_name") or "Unknown")[:100],
-        title=title,
-        location=location,
-        is_remote=bool(_REMOTE.search(f"{title} {location}")),
-        employment_type=job.get("contract_time"),
-        description=description,
-        url=job["redirect_url"],
-        posted_at=_parse_iso(job.get("created")),
+        company=company,
+        title=job["name"],
+        # Only India postings are requested, so a missing full location is still in India.
+        location=location.get("fullLocation") or ", ".join(x for x in (location.get("city"), "India") if x),
+        is_remote=bool(location.get("remote")),
+        employment_type=_SR_LEVELS.get(level) or employment.get("label"),
+        description=" ".join(html_to_text((sections.get(k) or {}).get("text")) for k in _SR_SECTIONS).strip(),
+        url=job.get("postingUrl") or f"https://jobs.smartrecruiters.com/{company}/{job['id']}",
+        posted_at=_parse_iso(job.get("releasedDate")),
     )
 
 
-async def fetch_adzuna(
-    client: httpx.AsyncClient, app_id: str, app_key: str, pages_per_query: int = 3
-) -> list[Posting]:
-    """Search Adzuna India. Note: Adzuna returns a description snippet, not the full posting."""
-    found: dict[str, Posting] = {}
-    for query in ADZUNA_QUERIES:
-        for page in range(1, pages_per_query + 1):
-            # Sequential on purpose: the free tier is rate limited.
-            resp = await client.get(
-                f"https://api.adzuna.com/v1/api/jobs/in/search/{page}",
-                params={
-                    "app_id": app_id,
-                    "app_key": app_key,
-                    "results_per_page": 50,
-                    "max_days_old": 30,
-                    "sort_by": "date",
-                    **query,
-                },
-            )
-            resp.raise_for_status()
-            results = resp.json()["results"]
-            for job in results:
-                posting = _adzuna_posting(job)
-                found[posting.external_id] = posting
-            if len(results) < 50:
-                break
-    return list(found.values())
+async def fetch_smartrecruiters(client: httpx.AsyncClient, slug: str, company: str) -> list[Posting]:
+    """India postings from the public SmartRecruiters Posting API (no key needed).
+
+    The list endpoint has no description, so each posting's details are fetched too.
+    """
+    base = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+    summaries: list[dict] = []
+    while True:
+        resp = await client.get(base, params={"country": "in", "limit": 100, "offset": len(summaries)})
+        resp.raise_for_status()
+        data = resp.json()
+        summaries += data["content"]
+        if not data["content"] or len(summaries) >= data["totalFound"]:
+            break
+
+    limit = asyncio.Semaphore(4)
+
+    async def detail(summary: dict) -> Posting:
+        async with limit:
+            try:
+                resp = await client.get(f"{base}/{summary['id']}")
+                resp.raise_for_status()
+                return _smartrecruiters_posting(resp.json(), company)
+            except httpx.HTTPError:
+                # Keep the job (title, level, location) even if its description could not be loaded.
+                return _smartrecruiters_posting(summary, company)
+
+    return list(await asyncio.gather(*(detail(s) for s in summaries)))
 
 
 FETCHERS = {
     "greenhouse": fetch_greenhouse,
     "lever": fetch_lever,
     "ashby": fetch_ashby,
+    "smartrecruiters": fetch_smartrecruiters,
 }

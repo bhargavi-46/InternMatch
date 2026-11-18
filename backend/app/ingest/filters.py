@@ -45,7 +45,7 @@ def experience_level(posting: Posting) -> str:
     # Stated experience beats a junior-sounding title ("Associate TSE, 4+ years").
     if years is not None and years >= 2:
         return "other"
-    if _ENTRY.search(posting.title):
+    if _ENTRY.search(posting.title) or posting.employment_type == "entry_level":
         return "entry_level"
     if _SENIOR.search(posting.title):
         return "other"

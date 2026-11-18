@@ -24,7 +24,8 @@ def warm_up() -> None:
 
 
 def embed_documents(texts: list[str]) -> list[np.ndarray]:
-    return list(_model().embed(texts, batch_size=32))
+    # Small batches keep peak memory low: attention memory grows with batch size x 512 tokens squared.
+    return list(_model().embed(texts, batch_size=8))
 
 
 def embed_query(text: str) -> np.ndarray:

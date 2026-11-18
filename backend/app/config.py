@@ -8,8 +8,6 @@ class Settings(BaseSettings):
     database_url: str | None = None
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-120b"
-    adzuna_app_id: str | None = None
-    adzuna_app_key: str | None = None
     cors_origins: str = "http://localhost:3000"
 
 
