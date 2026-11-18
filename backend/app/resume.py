@@ -3,7 +3,7 @@ import re
 
 from pypdf import PdfReader
 
-from app.llm import get_llm
+from app.llm import structured_llm
 from app.profile import StudentProfile
 
 MAX_PAGES = 4
@@ -30,5 +30,4 @@ def redact_contact_details(text: str) -> str:
 
 
 def parse_resume(text: str) -> StudentProfile:
-    llm = get_llm().with_structured_output(StudentProfile, method="json_schema")
-    return llm.invoke([("system", PARSE_PROMPT), ("human", redact_contact_details(text))])
+    return structured_llm(StudentProfile).invoke([("system", PARSE_PROMPT), ("human", redact_contact_details(text))])

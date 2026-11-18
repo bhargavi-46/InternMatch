@@ -1,9 +1,12 @@
 """API checks that need neither a database nor an LLM (TestClient without `with` skips app startup)."""
 
+import groq
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.exceptions import OutputParserException
 
-from app import resume
+from app import agent, resume
 from app.config import settings
 from app.main import app
 from app.ratelimit import RateLimiter
@@ -48,3 +51,34 @@ def test_rate_limiter_blocks_after_limit():
     with pytest.raises(HTTPException) as exc:
         limiter(request)
     assert exc.value.status_code == 429
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "phrase"),
+    [
+        (OutputParserException("bad json"), 502, "unexpected answer"),
+        (
+            groq.RateLimitError(
+                "quota", response=httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com")), body=None
+            ),
+            429,
+            "quota",
+        ),
+        (
+            groq.AuthenticationError(
+                "bad key", response=httpx.Response(401, request=httpx.Request("POST", "https://api.groq.com")), body=None
+            ),
+            503,
+            "rejected the API key",
+        ),
+    ],
+)
+def test_llm_failures_return_clear_messages(monkeypatch, error, status, phrase):
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(settings, "groq_api_key", "test-key")
+    monkeypatch.setattr(agent, "chat", fail)
+    resp = client.post("/agent/chat", json={"thread_id": "thread-456", "message": "hi"})
+    assert resp.status_code == status
+    assert phrase in resp.json()["detail"]

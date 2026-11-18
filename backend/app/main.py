@@ -2,10 +2,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Literal
 
+import groq
 import numpy as np
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from langchain_core.exceptions import OutputParserException
 from pydantic import BaseModel, ConfigDict, Field
 from pypdf.errors import PdfReadError
 from sqlalchemy import func, select
@@ -44,6 +46,25 @@ app.add_middleware(
 @app.exception_handler(LLMNotConfigured)
 def llm_not_configured(_: Request, exc: LLMNotConfigured) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(groq.AuthenticationError)
+def llm_bad_key(_: Request, exc: groq.AuthenticationError) -> JSONResponse:
+    detail = "Groq rejected the API key. Check GROQ_API_KEY in backend/.env and restart the API."
+    return JSONResponse(status_code=503, content={"detail": detail})
+
+
+@app.exception_handler(groq.RateLimitError)
+def llm_quota(_: Request, exc: groq.RateLimitError) -> JSONResponse:
+    detail = "The free Groq quota is used up for now. Please wait a minute and try again."
+    return JSONResponse(status_code=429, content={"detail": detail})
+
+
+@app.exception_handler(groq.APIError)
+@app.exception_handler(OutputParserException)
+def llm_failed(_: Request, exc: Exception) -> JSONResponse:
+    detail = "The AI service gave an unexpected answer. Please try again."
+    return JSONResponse(status_code=502, content={"detail": detail})
 
 
 class JobOut(BaseModel):

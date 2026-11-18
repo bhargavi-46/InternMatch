@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { api } from "@/lib/api";
 import { useStoredState } from "@/lib/storage";
@@ -82,7 +83,17 @@ export function ChatPanel({ profile, onClose }: { profile: Profile | null; onClo
                 m.text
               ) : (
                 <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
                   components={{
+                    table: ({ children }) => (
+                      <div className="my-2 overflow-x-auto">
+                        <table className="w-full border-collapse text-xs">{children}</table>
+                      </div>
+                    ),
+                    th: ({ children }) => (
+                      <th className="border border-slate-200 bg-slate-100 px-2 py-1 text-left font-semibold">{children}</th>
+                    ),
+                    td: ({ children }) => <td className="border border-slate-200 px-2 py-1 align-top">{children}</td>,
                     a: ({ href, children }) => (
                       <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">
                         {children}
