@@ -57,9 +57,13 @@ def experience_level(posting: Posting) -> str:
 def classify_level(title: str, description: str, employment_type: str | None) -> str:
     """internship, entry_level (open to freshers) or other. A job counts as entry level only on a clear signal."""
     title = title.replace("_", " ")  # "IN_RBIN_Senior Engineer" is still a senior title
-    if _INTERN.search(title) or (employment_type or "").lower() in {"intern", "internship"}:
+    if _INTERN.search(title):
         return "internship"
     years = min_years_experience(description, title)
+    # Employers sometimes mislabel the type, so a senior title or 2+ years overrides an "internship" type.
+    senior = _SENIOR.search(title) or (years is not None and years >= 2)
+    if (employment_type or "").lower() in {"intern", "internship"} and not senior:
+        return "internship"
     # Stated experience beats a junior-sounding title ("Associate TSE, 4+ years").
     if years is not None and years >= 2:
         return "other"

@@ -7,7 +7,7 @@ re-tags saved jobs on startup.
 import re
 from typing import Literal
 
-TAGS_VERSION = 3
+TAGS_VERSION = 4
 
 RoleFamily = Literal["swe", "ml_ai", "data", "devops_cloud", "security", "qa", "other", "non_tech"]
 ROLE_FAMILIES: tuple[RoleFamily, ...] = ("swe", "ml_ai", "data", "devops_cloud", "security", "qa", "other", "non_tech")

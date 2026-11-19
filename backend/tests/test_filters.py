@@ -50,6 +50,7 @@ def test_is_relevant_location(location, is_remote, expected):
         ("ASIC Verification Engineer - 5 years to 13Years", "1+ years of experience with UVM", None, "other"),
         ("Research Engineer", "Experience : At least 3 years of relevant work", "entry_level", "other"),
         ("Data Analyst", "", None, "other"),  # no signal either way: not shown as entry level
+        ("Senior Business Analyst", "5+ years of experience", "internship", "other"),
     ],
 )
 def test_experience_level(title, description, employment_type, expected):
