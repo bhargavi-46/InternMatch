@@ -109,19 +109,24 @@ NEW_COLUMNS = {"role_family": "varchar(20)", "duration_months": "integer", "star
 
 
 def retag_jobs(engine: Engine) -> int:
-    """Recompute tags for jobs tagged by older rules (or never tagged). Fast: pure Python on ~thousands of rows."""
+    """Recompute experience level and tags for jobs tagged by older rules (or never tagged). Fast: pure Python on
+    ~thousands of rows."""
+    from app.ingest.filters import classify_level, min_years_experience
     from app.ingest.tags import TAGS_VERSION, job_tags
+
+    def fresh(r) -> dict:
+        level = classify_level(r.title, r.description, r.employment_type)
+        return {"id": r.id, "experience_level": level, "min_years_experience": min_years_experience(r.description, r.title),
+                **job_tags(r.title, r.description, level)}
 
     with Session(engine) as session, session.begin():
         stale = session.execute(
-            select(Job.id, Job.title, Job.description, Job.experience_level).where(
+            select(Job.id, Job.title, Job.description, Job.employment_type).where(
                 or_(Job.tags_version.is_(None), Job.tags_version != TAGS_VERSION)
             )
         ).all()
         if stale:
-            session.execute(
-                update(Job), [{"id": r.id, **job_tags(r.title, r.description, r.experience_level)} for r in stale]
-            )
+            session.execute(update(Job), [fresh(r) for r in stale])
     if stale:
         log.info("Re-tagged %d jobs", len(stale))
     return len(stale)

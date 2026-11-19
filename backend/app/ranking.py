@@ -70,8 +70,13 @@ def _filtered(filters: SearchFilters, exclude_ids: Iterable[int] = ()) -> Select
     if filters.location:
         stmt = stmt.where(or_(Job.location.ilike(f"%{filters.location}%"), Job.is_remote))
     if filters.max_years_experience is not None:
+        # Internships are for students, so "2+ years with Python" there is about skills, not work history.
         stmt = stmt.where(
-            or_(Job.min_years_experience.is_(None), Job.min_years_experience <= filters.max_years_experience)
+            or_(
+                Job.experience_level == "internship",
+                Job.min_years_experience.is_(None),
+                Job.min_years_experience <= filters.max_years_experience,
+            )
         )
     if filters.role_families:
         family = Job.role_family.in_(filters.role_families)

@@ -81,7 +81,7 @@ def to_row(posting: Posting, seen_at: datetime) -> dict:
         "is_remote": posting.is_remote,
         "employment_type": posting.employment_type,
         "experience_level": level,
-        "min_years_experience": min_years_experience(posting.description),
+        "min_years_experience": min_years_experience(posting.description, posting.title),
         "description": posting.description,
         "url": posting.url,
         "posted_at": posting.posted_at,
@@ -92,6 +92,12 @@ def to_row(posting: Posting, seen_at: datetime) -> dict:
     }
 
 
+def unique_postings(postings: list[Posting]) -> list[Posting]:
+    """One posting per (source, external_id). A board can list one job twice (e.g. the same requisition in two
+    cities), and Postgres rejects an upsert that touches the same row twice."""
+    return list({(p.source, p.external_id): p for p in postings}.values())
+
+
 def save(batches: list[Batch], started: datetime) -> None:
     init_db()
     with Session(get_engine()) as session, session.begin():
@@ -99,7 +105,7 @@ def save(batches: list[Batch], started: datetime) -> None:
             if batch.postings is None:
                 continue  # fetch failed: keep this batch's existing jobs as they are
             if batch.postings:
-                stmt = insert(Job).values([to_row(p, started) for p in batch.postings])
+                stmt = insert(Job).values([to_row(p, started) for p in unique_postings(batch.postings)])
                 new = stmt.excluded
                 set_ = {col: new[col] for col in UPDATED_COLUMNS}
                 set_["embedding"] = case((Job.content_hash == new.content_hash, Job.embedding), else_=None)

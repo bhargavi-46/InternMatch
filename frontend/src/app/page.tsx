@@ -20,7 +20,7 @@ const DEFAULT_FILTERS: Filters = {
   levels: ["internship", "entry_level"],
   remote_only: false,
   location: null,
-  max_years_experience: 1,
+  max_years_experience: 0, // freshers: hide roles that ask for any work experience
   role_families: TECH_FAMILIES,
   min_duration_months: null,
   posted_within_days: null,
@@ -37,7 +37,7 @@ const TAB_LABEL: Record<Tab, string> = {
 
 export default function Home() {
   const [profile, setProfile] = useStoredState<Profile | null>("im.profile", null);
-  const [storedFilters, setFilters] = useStoredState<Filters>("im.filters", DEFAULT_FILTERS);
+  const [storedFilters, setFilters] = useStoredState<Filters>("im.filters.v2", DEFAULT_FILTERS);
   // Filters saved by an older version lack the newer fields.
   const filters = useMemo(() => ({ ...DEFAULT_FILTERS, ...storedFilters }), [storedFilters]);
   const { apps, setStatus, setNotes } = useApplications();

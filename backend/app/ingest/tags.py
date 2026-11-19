@@ -1,12 +1,13 @@
 """Tags computed from a posting's title and text: role family, internship duration and start month.
 
-Bump TAGS_VERSION whenever these rules change; the API re-tags saved jobs on startup.
+Bump TAGS_VERSION whenever these rules or the experience-level rules in filters.py change; the API
+re-tags saved jobs on startup.
 """
 
 import re
 from typing import Literal
 
-TAGS_VERSION = 2
+TAGS_VERSION = 3
 
 RoleFamily = Literal["swe", "ml_ai", "data", "devops_cloud", "security", "qa", "other", "non_tech"]
 ROLE_FAMILIES: tuple[RoleFamily, ...] = ("swe", "ml_ai", "data", "devops_cloud", "security", "qa", "other", "non_tech")

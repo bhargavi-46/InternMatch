@@ -37,7 +37,19 @@ def test_is_relevant_location(location, is_remote, expected):
         ("Associate TSE", "We need 4+ years of experience in support.", None, "other"),
         ("Software Engineer", "0-1 years of experience with Python.", None, "entry_level"),
         ("Senior Software Engineer", "", None, "other"),
-        ("Product Manager I", "", None, "entry_level"),
+        ("Product Manager I", "", None, "other"),
+        ("Sales Manager - I", "", None, "other"),
+        ("Associate Product Manager", "", None, "entry_level"),
+        ("IN_RBIN_Senior Engineer/Assistant Manager_Front Line Manager", "", "entry_level", "other"),
+        ("Customer Success Engineer - II", "1+ years of experience", None, "other"),
+        ("Captain 2", "", None, "other"),
+        ("AI/ML Expert", "", None, "other"),
+        ("Senior Associate Software Engineer", "", None, "other"),
+        ("SDE I", "", None, "entry_level"),
+        ("Project Management Associate", "0-1 years of experience", None, "entry_level"),
+        ("ASIC Verification Engineer - 5 years to 13Years", "1+ years of experience with UVM", None, "other"),
+        ("Research Engineer", "Experience : At least 3 years of relevant work", "entry_level", "other"),
+        ("Data Analyst", "", None, "other"),  # no signal either way: not shown as entry level
     ],
 )
 def test_experience_level(title, description, employment_type, expected):
@@ -51,10 +63,16 @@ def test_experience_level(title, description, employment_type, expected):
         ("2-4 years of relevant industry experience", 2),
         ("0 to 1 years experience; 5 years of experience preferred", 0),
         ("No experience needed.", None),
+        ("Experience: 1 - 2 years as content creator", 1),
+        ("Minimum 4 yrs in backend development", 4),
     ],
 )
 def test_min_years_experience(description, expected):
     assert min_years_experience(description) == expected
+
+
+def test_years_in_the_title_win_over_the_description():
+    assert min_years_experience("1+ years of experience with Python", "Analyst - 3+ yrs") == 3
 
 
 def test_html_to_text_handles_double_escaped_html():

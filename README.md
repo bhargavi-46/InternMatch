@@ -282,6 +282,19 @@ To run the full stack in containers instead: `docker compose up`.
 
 > Render's free plan sleeps after 15 minutes of inactivity; the first request afterwards takes about a minute.
 
+### Workday companies: refresh from your own PC
+
+Workday (NVIDIA, Intel, Adobe, PayPal, …) answers `HTTP 429` to GitHub's servers, so the daily GitHub refresh skips those
+boards. They work from a home connection, so a second refresh runs on your PC:
+
+1. Put one line, `DATABASE_URL=<Neon connection string>`, in `%USERPROFILE%\.internmatch\neon.env` (outside the repo and
+   OneDrive, so it is never committed or synced).
+2. Run `backend\scripts\refresh-from-pc.ps1` by hand, or schedule it daily in Windows Task Scheduler. Output goes to
+   `%USERPROFILE%\.internmatch\refresh.log`.
+
+A board that fails in one refresh keeps its existing jobs, so the two refreshes don't undo each other. Jobs that no
+refresh has seen for 14 days are hidden, in case they have closed.
+
 ---
 
 ## Project Structure

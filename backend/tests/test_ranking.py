@@ -78,3 +78,9 @@ def test_duration_and_freshness_filters():
     sql = _sql(SearchFilters(min_duration_months=6, posted_within_days=7))
     assert "duration_months >= 6" in sql
     assert "posted_at >=" in sql
+
+
+def test_fresher_filter_keeps_internships_that_mention_years():
+    sql = _sql(SearchFilters(max_years_experience=0))
+    assert "min_years_experience <= 0" in sql
+    assert "experience_level = 'internship'" in sql

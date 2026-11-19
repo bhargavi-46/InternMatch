@@ -63,18 +63,21 @@ export function FiltersBar({ filters, onChange }: Props) {
           Remote only
         </label>
         <label className="inline-flex items-center gap-1.5 text-slate-700">
-          <input
-            type="checkbox"
-            checked={filters.max_years_experience !== null}
+          Experience
+          <select
+            value={filters.max_years_experience ?? "any"}
             onChange={(e) =>
               onChange({
                 ...filters,
-                max_years_experience: e.target.checked ? 1 : null,
+                max_years_experience: e.target.value === "any" ? null : Number(e.target.value),
               })
             }
-            className="size-4 accent-blue-600"
-          />
-          Hide roles needing 2+ years
+            className="rounded-full border border-slate-300 bg-white px-2 py-1 outline-none focus:border-blue-500"
+          >
+            <option value="0">Fresher (0 years)</option>
+            <option value="1">Up to 1 year</option>
+            <option value="any">Any</option>
+          </select>
         </label>
         <input
           value={filters.location ?? ""}
